@@ -32,3 +32,6 @@ build/
 # Node (for Phase 3 frontend)
 node_modules/
 .vite/
+
+#uv
+.venv/
