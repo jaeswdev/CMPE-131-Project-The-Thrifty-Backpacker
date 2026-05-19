@@ -14,6 +14,10 @@ class SignupRequest(BaseModel):
     Last_Name: str = Field(min_length=1, max_length=50)
     Email: EmailStr
     Phone_Number: str | None = Field(default=None, max_length=20)
+    # Tenant_ID is temporary scaffolding. Anahi's Task #12 (tenant middleware)
+    # will inject Tenant_ID from the Host header instead. Until then, accept
+    # it in the body with a default of 1 (Agency A).
+    Tenant_ID: int = Field(default=1, ge=1)
     Password: str = Field(min_length=8, max_length=128)
 
 
