@@ -7,8 +7,7 @@ from app.db.base import Base
 from app.db.session import engine
 
 # Import all models so SQLAlchemy registers them on Base.metadata.
-# Add Anahi's models here as they land: from app.models import tenant, booking
-from app.models import user # noqa: F401
+from app.models import tenant, user # noqa: F401
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
