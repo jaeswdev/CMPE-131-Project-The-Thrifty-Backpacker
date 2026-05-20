@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response
 
-from app.api.v1.endpoints import tenants, users
+from app.api.v1.endpoints import search, tenants, users
 from app.core.config import settings
 from app.db.base import Base
 from app.db.session import engine
@@ -25,6 +25,7 @@ app.add_middleware(TenantMiddleware)
 # Routers
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
 app.include_router(tenants.router, prefix="/api/v1/tenants", tags=["tenants"])
+app.include_router(search.router, prefix="/api/v1", tags=["search"])
 
 @app.get("/health")
 def health():
