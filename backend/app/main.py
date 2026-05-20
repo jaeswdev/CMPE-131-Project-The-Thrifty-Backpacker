@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Response
 
-from app.api.v1.endpoints import users
+from app.api.v1.endpoints import tenants, users
 from app.core.config import settings
 from app.db.base import Base
 from app.db.session import engine
@@ -24,6 +24,7 @@ app.add_middleware(TenantMiddleware)
 
 # Routers
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
+app.include_router(tenants.router, prefix="/api/v1/tenants", tags=["tenants"])
 
 @app.get("/health")
 def health():
@@ -37,16 +38,3 @@ def health():
 def favicon():
     return Response(status_code=204)
 
-@app.get("/__debug/tenant", tags=["debug"])
-def debug_current_tenant(request: Request):
-    """TEMPORARY: shows what the tenant middleware resolved for this request.
-    Will be replaced by GET /api/v1/tenants/me in PR C."""
-    tenant = getattr(request.state, "tenant", None)
-    if tenant is None:
-        return {"tenant": None, "resolved_from": "nothing"}
-    return {
-        "Tenant_ID": tenant.Tenant_ID,
-        "Name": tenant.Name,
-        "Subdomain": tenant.Subdomain,
-        "Brand_Color": tenant.Brand_Color,
-    }

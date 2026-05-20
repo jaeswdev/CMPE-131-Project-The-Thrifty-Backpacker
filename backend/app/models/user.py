@@ -10,7 +10,7 @@ Schema notes:
 """
 
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -26,9 +26,14 @@ class User(Base):
     Phone_Number = Column(String(20), nullable=True)
     Password_Hash = Column(String(255), nullable=False)
 
-    # Multi-tenancy: which agency this user belongs to.
-    # Anahi adds the ForeignKey("Tenants.Tenant_ID") in Task #13 once Tenants exists.
-    Tenant_ID = Column(Integer, nullable=False, index=True)
+    # Multi-tenancy: which agency this user belongs to. FK enforced by SQLite
+    # (PRAGMA foreign_keys=ON in app/db/session.py).
+    Tenant_ID = Column(
+        Integer,
+        ForeignKey("Tenants.Tenant_ID"),
+        nullable=False,
+        index=True,
+    )
 
     Created_At = Column(DateTime(timezone=True), server_default=func.now())
 

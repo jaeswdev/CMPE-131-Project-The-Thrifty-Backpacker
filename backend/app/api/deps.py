@@ -6,7 +6,8 @@ an authenticated request. If the JWT is missing/invalid/expired, the request
 is rejected with 401 before the endpoint runs.
 """
 
-from fastapi import Depends, HTTPException, status
+from app.models.tenant import Tenant
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 from sqlalchemy.orm import Session
@@ -50,3 +51,23 @@ def get_current_user(
         raise credentials_error
 
     return user
+
+def get_current_tenant(request: Request) -> Tenant:
+    """
+    Require that the tenant middleware resolved a Tenant for this request.
+
+    Endpoints declare `current_tenant: Tenant = Depends(get_current_tenant)`
+    to require tenant scoping. Raises 400 if no tenant was resolved
+    (e.g. the request hit 127.0.0.1 with no X-Tenant-Subdomain header).
+    """
+    tenant = getattr(request.state, "tenant", None)
+    if tenant is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Tenant could not be resolved for this request. "
+                "Set the X-Tenant-Subdomain header (e.g. 'agenta') or "
+                "access via a tenant subdomain like agenta.local."
+            ),
+        )
+    return tenant
