@@ -1,0 +1,253 @@
+"""
+Booking endpoints (Phase 3 contract).
+
+Currently implements POST /api/v1/bookings (Task #21).
+Future tasks will add:
+  - GET /api/v1/bookings/by-agent-user (Anahi, Task #22)
+  - PUT /api/v1/bookings/{id} (Hyunjae, Task #23)
+  - PATCH /api/v1/bookings/{id}/cancel (Hyunjae, Task #24)
+"""
+
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from app.api.deps import get_current_tenant, get_current_user
+from app.db.session import get_db
+from app.models.booking import Booking, BookingType
+from app.models.booking_cache import AttractionCache, FlightCache, HotelCache
+from app.models.tenant import Tenant
+from app.models.user import User
+from app.schemas.booking import (
+    BookingResponse,
+    CreateAttractionBookingRequest,
+    CreateFlightBookingRequest,
+    CreateHotelBookingRequest,
+    FlightItemPayload,
+    HotelItemPayload,
+    AttractionItemPayload,
+)
+
+router = APIRouter()
+
+
+# ============================================================================
+# Cache helpers — each returns the new cache row's primary key
+# ============================================================================
+
+def _cache_flight(db: Session, payload: FlightItemPayload) -> FlightCache:
+    cache_row = FlightCache(
+        Offer_Token=payload.offer_token,
+        Airline_Name=payload.airline_name,
+        Airline_Code=payload.airline_code,
+        Airline_Logo_URL=payload.airline_logo_url,
+        Departure_Airport_Code=payload.departure_airport_code,
+        Departure_Airport_Name=payload.departure_airport_name,
+        Departure_City=payload.departure_city,
+        Departure_Datetime=payload.departure_datetime,
+        Arrival_Airport_Code=payload.arrival_airport_code,
+        Arrival_Airport_Name=payload.arrival_airport_name,
+        Arrival_City=payload.arrival_city,
+        Arrival_Datetime=payload.arrival_datetime,
+        Stops=payload.stops,
+        Duration_Minutes=payload.duration_minutes,
+        Price=payload.price,
+        Currency=payload.currency,
+        Trip_Type=payload.trip_type,
+    )
+    db.add(cache_row)
+    db.flush()  # Get the PK without committing yet
+    return cache_row
+
+
+def _cache_hotel(db: Session, payload: HotelItemPayload) -> HotelCache:
+    if payload.checkout_date <= payload.checkin_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="checkout_date must be after checkin_date.",
+        )
+
+    cache_row = HotelCache(
+        External_Hotel_ID=payload.external_hotel_id,
+        Hotel_Name=payload.hotel_name,
+        Accommodation_Type=payload.accommodation_type,
+        Star_Class=payload.star_class,
+        City=payload.city,
+        Address=payload.address,
+        Checkin_Date=payload.checkin_date,
+        Checkout_Date=payload.checkout_date,
+        Total_Price=payload.total_price,
+        Price_Per_Night=payload.price_per_night,
+        Currency=payload.currency,
+        Photo_URL=payload.photo_url,
+        Booking_URL=payload.booking_url,
+    )
+    db.add(cache_row)
+    db.flush()
+    return cache_row
+
+
+def _cache_attraction(db: Session, payload: AttractionItemPayload) -> AttractionCache:
+    if payload.end_date < payload.start_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="end_date must be on or after start_date.",
+        )
+
+    cache_row = AttractionCache(
+        Offer_Token=payload.offer_token,
+        Name=payload.name,
+        Description=payload.description,
+        City=payload.city,
+        Price=payload.price,
+        Currency=payload.currency,
+        Rating=payload.rating,
+        Has_Free_Cancellation=payload.has_free_cancellation,
+        Start_Date=payload.start_date,
+        End_Date=payload.end_date,
+        Photo_URL=payload.photo_url,
+        Booking_URL=payload.booking_url,
+    )
+    db.add(cache_row)
+    db.flush()
+    return cache_row
+
+
+# ============================================================================
+# Cache fetch helpers — used to attach the `item` dict to the response
+# ============================================================================
+
+def _fetch_cached_item(db: Session, booking: Booking) -> dict | None:
+    """Look up the cached item for a booking and return it as a dict."""
+    if booking.Booking_Type == BookingType.FLIGHT:
+        row = db.query(FlightCache).filter(FlightCache.Flight_Cache_ID == booking.Cached_Item_ID).first()
+    elif booking.Booking_Type == BookingType.HOTEL:
+        row = db.query(HotelCache).filter(HotelCache.Hotel_Cache_ID == booking.Cached_Item_ID).first()
+    elif booking.Booking_Type == BookingType.ATTRACTION:
+        row = db.query(AttractionCache).filter(AttractionCache.Attraction_Cache_ID == booking.Cached_Item_ID).first()
+    else:
+        return None
+
+    if row is None:
+        return None
+
+    # Convert SQLAlchemy row to a clean dict (skip private attrs)
+    return {
+        col.name: getattr(row, col.name)
+        for col in row.__table__.columns
+    }
+
+
+def _booking_to_response(db: Session, booking: Booking) -> BookingResponse:
+    """Build a BookingResponse including the cached item details."""
+    return BookingResponse(
+        Booking_ID=booking.Booking_ID,
+        User_ID=booking.User_ID,
+        Tenant_ID=booking.Tenant_ID,
+        Booking_Type=booking.Booking_Type.value if hasattr(booking.Booking_Type, "value") else str(booking.Booking_Type),
+        Cached_Item_ID=booking.Cached_Item_ID,
+        Status=booking.Status.value if hasattr(booking.Status, "value") else str(booking.Status),
+        Total_Price=booking.Total_Price,
+        Currency=booking.Currency,
+        Notes=booking.Notes,
+        Created_At=booking.Created_At,
+        Updated_At=booking.Updated_At,
+        item=_fetch_cached_item(db, booking),
+    )
+
+
+# ============================================================================
+# POST /bookings — three variants via separate endpoint paths
+# ============================================================================
+
+# We expose three separate endpoint paths even though Phase 3 contract says
+# POST /bookings, because Pydantic's discriminated union handling becomes
+# fragile across FastAPI versions. Three sub-paths with the same prefix
+# achieves the same UX with simpler routing.
+
+@router.post(
+    "/flights",
+    response_model=BookingResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a flight booking",
+    description="Snapshots a flight offer into FlightCache and creates a tenant-scoped Booking row.",
+)
+def create_flight_booking(
+    body: CreateFlightBookingRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    current_tenant: Tenant = Depends(get_current_tenant),
+):
+    cache_row = _cache_flight(db, body.flight)
+    booking = Booking(
+        User_ID=current_user.User_ID,
+        Tenant_ID=current_tenant.Tenant_ID,
+        Booking_Type=BookingType.FLIGHT,
+        Cached_Item_ID=cache_row.Flight_Cache_ID,
+        Total_Price=body.flight.price,
+        Currency=body.flight.currency,
+        Notes=body.notes,
+    )
+    db.add(booking)
+    db.commit()
+    db.refresh(booking)
+    return _booking_to_response(db, booking)
+
+
+@router.post(
+    "/hotels",
+    response_model=BookingResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a hotel booking",
+    description="Snapshots a hotel into HotelCache and creates a tenant-scoped Booking row.",
+)
+def create_hotel_booking(
+    body: CreateHotelBookingRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    current_tenant: Tenant = Depends(get_current_tenant),
+):
+    cache_row = _cache_hotel(db, body.hotel)
+    booking = Booking(
+        User_ID=current_user.User_ID,
+        Tenant_ID=current_tenant.Tenant_ID,
+        Booking_Type=BookingType.HOTEL,
+        Cached_Item_ID=cache_row.Hotel_Cache_ID,
+        Total_Price=body.hotel.total_price,
+        Currency=body.hotel.currency,
+        Notes=body.notes,
+    )
+    db.add(booking)
+    db.commit()
+    db.refresh(booking)
+    return _booking_to_response(db, booking)
+
+
+@router.post(
+    "/attractions",
+    response_model=BookingResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create an attraction booking",
+    description="Snapshots an attraction into AttractionCache and creates a tenant-scoped Booking row.",
+)
+def create_attraction_booking(
+    body: CreateAttractionBookingRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    current_tenant: Tenant = Depends(get_current_tenant),
+):
+    cache_row = _cache_attraction(db, body.attraction)
+    booking = Booking(
+        User_ID=current_user.User_ID,
+        Tenant_ID=current_tenant.Tenant_ID,
+        Booking_Type=BookingType.ATTRACTION,
+        Cached_Item_ID=cache_row.Attraction_Cache_ID,
+        Total_Price=body.attraction.price,
+        Currency=body.attraction.currency,
+        Notes=body.notes,
+    )
+    db.add(booking)
+    db.commit()
+    db.refresh(booking)
+    return _booking_to_response(db, booking)
