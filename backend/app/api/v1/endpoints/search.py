@@ -15,11 +15,14 @@ from app.schemas.flight import (
     FlightResult,
     FlightSearchResponse,
 )
-from app.schemas.hotel import HotelResult, HotelSearchResponse
 
+from app.schemas.attraction import AttractionResult, AttractionSearchResponse
+from app.schemas.hotel import HotelResult, HotelSearchResponse
 from app.services.rapidapi import (
+    resolve_attraction_dest_id,
     resolve_flight_location, 
     resolve_hotel_location,
+    search_attractions_raw,
     search_flights_raw,
     search_hotels_raw,
 )
@@ -372,4 +375,199 @@ def _transform_hotel(hotel: dict[str, Any]) -> HotelResult | None:
         )
     except Exception:
         # Defensive: malformed hotel doesn't crash the whole response
+        return None
+    
+
+# ============================================================================
+# Attractions search
+# ============================================================================
+
+
+# US-2 price tier definitions. Maps each tier to (min_inclusive, max_exclusive_or_None).
+_PRICE_TIERS = {
+    "free":     (0.0,   0.01),    # Effectively $0
+    "under_25": (0.01,  25.0),
+    "25_75":    (25.0,  75.0),
+    "75_plus":  (75.0,  None),    # No upper bound
+}
+
+
+@router.get(
+    "/attractions/search",
+    response_model=AttractionSearchResponse,
+    summary="Search for attractions and activities by price tier",
+    description=(
+        "Searches Tipsters' Booking.com attractions API for tours, activities, "
+        "and experiences at a destination. Supports US-2 price tiers: 'free', "
+        "'under_25', '25_75', '75_plus', or omit for no filter."
+    ),
+    responses={
+        200: {"description": "Search completed (results may be empty — see message field)."},
+        422: {"description": "Validation error (bad tier, bad dates, etc.)."},
+        502: {"description": "Travel data provider is unreachable or returned an error."},
+        504: {"description": "Travel data provider timed out."},
+    },
+)
+async def search_attractions(
+    destination: str = Query(..., min_length=2, max_length=80,
+                             description="City name (e.g. 'London')"),
+    start_date: date = Query(..., description="Start of availability window (YYYY-MM-DD)"),
+    end_date: date = Query(..., description="End of availability window (YYYY-MM-DD)"),
+    price_tier: str | None = Query(None,
+                                   pattern="^(free|under_25|25_75|75_plus)$",
+                                   description="Price tier filter (US-2). Omit for no filter."),
+    min_rating: float | None = Query(None, ge=0, le=5,
+                                     description="Minimum review average (0-5)"),
+    order_by: str = Query("attr_book_score",
+                          pattern="^(attr_book_score|trending|lowest_price|review_score)$",
+                          description="Sort order"),
+):
+    """Search attractions and optionally filter by US-2 price tier."""
+
+    # === Step 1: Validate date range ===
+    if end_date < start_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="end_date must be on or after start_date.",
+        )
+
+    # === Step 2: Resolve destination ===
+    location = await resolve_attraction_dest_id(destination)
+    if location is None:
+        return AttractionSearchResponse(
+            total_results=0,
+            location_label=destination,
+            requested_currency="USD",
+            price_tier_applied=price_tier,
+            currency_filter_applied=False,
+            items=[],
+            message=f"Could not find any destination matching '{destination}'.",
+        )
+
+    # === Step 3: Call Tipsters ===
+    raw = await search_attractions_raw(
+        dest_id=location["dest_id"],
+        start_date=start_date.isoformat(),
+        end_date=end_date.isoformat(),
+        currency="USD",
+        order_by=order_by,
+        min_rating=min_rating,
+    )
+
+    raw_products = raw.get("products", []) or []
+
+    # === Step 4: Transform ===
+    all_items: list[AttractionResult] = []
+    returned_currencies: set[str] = set()
+    for product in raw_products:
+        transformed = _transform_attraction(product, location["label"])
+        if transformed is not None:
+            all_items.append(transformed)
+            returned_currencies.add(transformed.currency)
+
+    # === Step 5: Apply price tier filter (US-2) ===
+    can_filter_by_price = (returned_currencies == {"USD"})
+
+    if price_tier and can_filter_by_price:
+        min_price, max_price = _PRICE_TIERS[price_tier]
+        if max_price is None:
+            filtered = [item for item in all_items if item.price >= min_price]
+        else:
+            filtered = [item for item in all_items if min_price <= item.price < max_price]
+    else:
+        filtered = all_items
+
+    # === Step 6: Empty-results / messaging ===
+    if not filtered:
+        if all_items and price_tier and can_filter_by_price:
+            message = f"No attractions found in the '{price_tier}' price tier. Try a wider tier."
+        else:
+            message = f"No attractions found in {location['label']} for those dates."
+        return AttractionSearchResponse(
+            total_results=len(raw_products),
+            location_label=location["label"],
+            requested_currency="USD",
+            price_tier_applied=price_tier,
+            currency_filter_applied=can_filter_by_price,
+            items=[],
+            message=message,
+        )
+
+    response_message = None
+    if price_tier and not can_filter_by_price:
+        currencies_str = ", ".join(sorted(returned_currencies))
+        response_message = (
+            f"Note: attractions are priced in {currencies_str} (provider did not honor USD request). "
+            "Price tier filter was not applied."
+        )
+
+    return AttractionSearchResponse(
+        total_results=len(raw_products),
+        location_label=location["label"],
+        requested_currency="USD",
+        price_tier_applied=price_tier,
+        currency_filter_applied=can_filter_by_price,
+        items=filtered,
+        message=response_message,
+    )
+
+
+def _transform_attraction(product: dict[str, Any], fallback_city: str) -> AttractionResult | None:
+    """Convert one Tipsters attraction product into an AttractionResult."""
+    try:
+        product_id = product.get("id")
+        if not product_id:
+            return None
+
+        # Price
+        price_block = product.get("representativePrice") or {}
+        price_value = price_block.get("publicAmount") or price_block.get("chargeAmount")
+        if price_value is None:
+            return None  # Skip results without a usable price
+
+        # Photo
+        photo_block = product.get("primaryPhoto") or {}
+        photo_url = photo_block.get("small") or photo_block.get("medium") or photo_block.get("large")
+
+        # Reviews
+        reviews = product.get("reviewsStats") or {}
+        combined = reviews.get("combinedNumericStats") or {}
+
+        # Bestseller flag derived from flags[]
+        flags = product.get("flags") or []
+        is_bestseller = any(
+            f.get("flag") == "bestseller" and f.get("value") is True
+            for f in flags
+        )
+
+        # Cancellation
+        cancellation = product.get("cancellationPolicy") or {}
+        has_free_cancellation = bool(cancellation.get("hasFreeCancellation"))
+
+        # Location
+        ufi_details = product.get("ufiDetails") or {}
+        city = ufi_details.get("bCityName") or fallback_city
+
+        # Booking URL: Tipsters doesn't return a direct URL, but slug + ID lets us construct one
+        slug = product.get("slug", "")
+        booking_url = f"https://www.booking.com/attractions/{ufi_details.get('url', {}).get('country', 'us')}/{slug}.html" if slug else None
+
+        return AttractionResult(
+            offer_token=product_id,
+            name=product.get("name", "Unknown"),
+            description=product.get("shortDescription"),
+            price=float(price_value),
+            currency=price_block.get("currency", "USD"),
+            rating=combined.get("average"),
+            review_count=reviews.get("allReviewsCount"),
+            review_score_word=combined.get("reviewScore"),
+            has_free_cancellation=has_free_cancellation,
+            is_bestseller=is_bestseller,
+            city=city,
+            latitude=ufi_details.get("latitude"),
+            longitude=ufi_details.get("longitude"),
+            photo_url=photo_url,
+            booking_url=booking_url,
+        )
+    except Exception:
         return None
