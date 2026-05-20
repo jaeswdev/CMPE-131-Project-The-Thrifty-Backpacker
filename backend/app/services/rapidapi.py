@@ -162,3 +162,97 @@ async def search_flights_raw(
         params["return_date"] = return_date
 
     return await _get(path="/v1/flights/search", params=params)
+
+# === Hotel location resolver ===
+
+# Tipsters' hotel locations endpoint returns mixed types: city, district,
+# airport, landmark, region. We prefer city-level results because backpackers
+# think in cities ("London hostels"), not airports or districts.
+_HOTEL_TYPE_PREFERENCE = ["city", "district", "region", "landmark", "airport"]
+
+
+async def resolve_hotel_location(query: str) -> dict[str, str] | None:
+    """
+    Convert a user-friendly query like "London" into Tipsters' hotel location
+    identifiers. Unlike flights, hotels need TWO fields: dest_id + dest_type.
+
+    Returns a dict like {"dest_id": "-2601889", "dest_type": "city", "label": "London..."}
+    or None if no location was found.
+
+    Picking strategy: try dest_type in order of preference (city first), fall
+    back to whatever Tipsters returned first.
+    """
+    query = query.strip()
+    if not query:
+        return None
+
+    data = await _get(
+        path="/v1/hotels/locations",
+        params={"name": query, "locale": "en-gb"},
+    )
+
+    if not isinstance(data, list) or not data:
+        return None
+
+    # Try each preferred type in order
+    for preferred_type in _HOTEL_TYPE_PREFERENCE:
+        for loc in data:
+            if loc.get("dest_type") == preferred_type:
+                return {
+                    "dest_id": str(loc.get("dest_id", "")),
+                    "dest_type": loc.get("dest_type", ""),
+                    "label": loc.get("label", loc.get("name", "")),
+                }
+
+    # Fallback: just take the first result, whatever type
+    first = data[0]
+    return {
+        "dest_id": str(first.get("dest_id", "")),
+        "dest_type": first.get("dest_type", ""),
+        "label": first.get("label", first.get("name", "")),
+    }
+
+
+# === Hotel search ===
+
+async def search_hotels_raw(
+    dest_id: str,
+    dest_type: str,
+    checkin_date: str,
+    checkout_date: str,
+    adults: int = 1,
+    children_ages: str | None = None,
+    room_number: int = 1,
+    currency: str = "USD",
+    order_by: str = "popularity",
+    locale: str = "en-gb",
+    units: str = "metric",
+) -> dict[str, Any]:
+    """
+    Call Tipsters' hotel search endpoint with already-resolved location IDs.
+
+    Returns the raw response dict. The transformation into our clean
+    HotelResult schema happens in the endpoint layer.
+
+    `dest_id` and `dest_type` must come from resolve_hotel_location().
+    """
+    params: dict[str, Any] = {
+        "dest_id": dest_id,
+        "dest_type": dest_type,
+        "checkin_date": checkin_date,
+        "checkout_date": checkout_date,
+        "adults_number": adults,
+        "room_number": room_number,
+        "filter_by_currency": currency,
+        "order_by": order_by,
+        "locale": locale,
+        "units": units,
+        "page_number": 0,
+        "include_adjacency": "true",
+    }
+    if children_ages:
+        params["children_ages"] = children_ages
+        # Tipsters needs children_number to match the comma-separated ages
+        params["children_number"] = len(children_ages.split(","))
+
+    return await _get(path="/v1/hotels/search", params=params)
