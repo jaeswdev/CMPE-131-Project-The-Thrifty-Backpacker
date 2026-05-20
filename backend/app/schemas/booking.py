@@ -116,3 +116,12 @@ class BookingResponse(BaseModel):
     item: dict | None = None    # Shape depends on Booking_Type
 
     model_config = {"from_attributes": True}
+
+
+# ============================================================================
+# Update request
+# ============================================================================
+
+class UpdateBookingStatusRequest(BaseModel):
+    """Request body for PUT /bookings/{id} — currently only status mutations."""
+    status: Literal["PENDING", "CONFIRMED", "CANCELLED"]

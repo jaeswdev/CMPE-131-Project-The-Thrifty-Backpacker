@@ -27,6 +27,7 @@ from app.schemas.booking import (
     FlightItemPayload,
     HotelItemPayload,
     AttractionItemPayload,
+    UpdateBookingStatusRequest,
 )
 
 router = APIRouter()
@@ -252,7 +253,6 @@ def create_attraction_booking(
     db.refresh(booking)
     return _booking_to_response(db, booking)
 
-
 # ============================================================================
 # GET /bookings/by-agent-user — Task #22
 # ============================================================================
@@ -287,6 +287,93 @@ def get_bookings_by_agent_user(
         .all()
     )
     return [_booking_to_response(db, b) for b in bookings]
+
+
+# ============================================================================
+# State machine — which status transitions are allowed?
+# ============================================================================
+
+# PENDING is the entry state. CANCELLED is terminal.
+# CONFIRMED can still be CANCELLED (e.g. refund). CONFIRMED cannot go back to PENDING.
+_ALLOWED_TRANSITIONS: dict[str, set[str]] = {
+    "PENDING":   {"CONFIRMED", "CANCELLED"},
+    "CONFIRMED": {"CANCELLED"},
+    "CANCELLED": set(),  # terminal — nothing allowed
+}
+
+
+def _is_valid_transition(current: str, new: str) -> bool:
+    """Check whether moving from current → new is allowed by the state machine."""
+    if current == new:
+        return True  # No-op is always allowed (idempotent updates)
+    allowed = _ALLOWED_TRANSITIONS.get(current, set())
+    return new in allowed
+
+
+# ============================================================================
+# PUT /bookings/{id} — update status
+# ============================================================================
+
+@router.put(
+    "/{booking_id}",
+    response_model=BookingResponse,
+    summary="Update a booking's status",
+    description=(
+        "Updates a booking's status, enforcing the lifecycle state machine "
+        "(PENDING → CONFIRMED → CANCELLED). Tenant-scoped: a user from "
+        "Tenant A receives 404 (not 403) if they target Tenant B's booking, "
+        "to prevent cross-tenant information disclosure (TC-07 / AC 4.2)."
+    ),
+    responses={
+        200: {"description": "Status updated."},
+        401: {"description": "JWT missing or invalid."},
+        404: {"description": "Booking not found in this tenant."},
+        422: {"description": "Illegal status transition or validation error."},
+    },
+)
+def update_booking_status(
+    booking_id: int,
+    body: UpdateBookingStatusRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    current_tenant: Tenant = Depends(get_current_tenant),
+):
+    # Tenant-scoped query — returns 404 if the booking is in a different tenant.
+    booking = (
+        db.query(Booking)
+        .filter(
+            Booking.Booking_ID == booking_id,
+            Booking.Tenant_ID == current_tenant.Tenant_ID,
+        )
+        .first()
+    )
+
+    if booking is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Booking with ID {booking_id} not found.",
+        )
+
+    # Validate the state transition.
+    current_status_value = (
+        booking.Status.value if hasattr(booking.Status, "value") else str(booking.Status)
+    )
+    if not _is_valid_transition(current_status_value, body.status):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Cannot transition booking from {current_status_value} to {body.status}. "
+                f"Allowed transitions from {current_status_value}: "
+                f"{sorted(_ALLOWED_TRANSITIONS.get(current_status_value, set())) or 'none (terminal state)'}."
+            ),
+        )
+
+    # Apply the update.
+    booking.Status = body.status
+    db.commit()
+    db.refresh(booking)
+
+    return _booking_to_response(db, booking)
 
 
 # ============================================================================
