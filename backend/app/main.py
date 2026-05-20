@@ -7,7 +7,7 @@ from app.db.base import Base
 from app.db.session import engine
 
 # Import all models so SQLAlchemy registers them on Base.metadata.
-from app.models import booking, tenant, user # noqa: F401
+from app.models import booking, booking_cache, tenant, user # noqa: F401
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
