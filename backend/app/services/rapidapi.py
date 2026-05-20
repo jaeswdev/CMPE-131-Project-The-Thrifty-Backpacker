@@ -256,3 +256,71 @@ async def search_hotels_raw(
         params["children_number"] = len(children_ages.split(","))
 
     return await _get(path="/v1/hotels/search", params=params)
+
+# === Attraction location resolver ===
+
+async def resolve_attraction_dest_id(query: str) -> dict[str, Any] | None:
+    """
+    Translate a user-friendly query like "London" into the dest_id format the
+    attractions API expects.
+
+    Empirical finding: Tipsters' attractions API accepts the dest_id from the
+    hotel locations endpoint directly — sign preserved. Some cities have
+    negative IDs (London = -2601889), others positive (NYC = 20088325).
+    Reuses resolve_hotel_location and passes dest_id through unchanged.
+
+    Returns {"dest_id": <int>, "label": "London, ..."} or None.
+    """
+    location = await resolve_hotel_location(query)
+    if location is None or not location.get("dest_id"):
+        return None
+
+    try:
+        # Hotels returns the city dest_id as a negative string. Attractions uses
+        # the absolute value as a positive integer.
+        raw_dest_id = location["dest_id"]
+        attraction_dest_id = int(raw_dest_id)
+    except (ValueError, TypeError):
+        return None
+
+    return {
+        "dest_id": attraction_dest_id,
+        "label": location.get("label", query),
+    }
+
+
+# === Attraction search ===
+
+async def search_attractions_raw(
+    dest_id: int,
+    start_date: str,
+    end_date: str,
+    currency: str = "USD",
+    order_by: str = "attr_book_score",
+    min_rating: float | None = None,
+    label_filters: str | None = None,
+    locale: str = "en-gb",
+) -> dict[str, Any]:
+    """
+    Call Tipsters' attractions search endpoint with an already-resolved dest_id.
+
+    Returns the raw response dict. The transformation into our clean
+    AttractionResult schema happens in the endpoint layer.
+
+    `dest_id` must come from resolve_attraction_dest_id() (positive integer).
+    """
+    params: dict[str, Any] = {
+        "dest_id": dest_id,
+        "start_date": start_date,
+        "end_date": end_date,
+        "currency": currency,
+        "order_by": order_by,
+        "locale": locale,
+        "page_number": 0,
+    }
+    if min_rating is not None:
+        params["min_rating"] = min_rating
+    if label_filters:
+        params["label_filters"] = label_filters
+
+    return await _get(path="/v1/attractions/search", params=params)
