@@ -15,8 +15,14 @@ from app.schemas.flight import (
     FlightResult,
     FlightSearchResponse,
 )
-from app.services.rapidapi import resolve_flight_location, search_flights_raw
+from app.schemas.hotel import HotelResult, HotelSearchResponse
 
+from app.services.rapidapi import (
+    resolve_flight_location, 
+    resolve_hotel_location,
+    search_flights_raw,
+    search_hotels_raw,
+)
 router = APIRouter()
 
 
@@ -192,4 +198,178 @@ def _transform_offer(offer: dict[str, Any]) -> FlightResult | None:
         )
     except Exception:
         # Defensive: if Tipsters returns a malformed offer, skip it rather than crash the whole response
+        return None
+    
+
+# ============================================================================
+# Hotel search
+# ============================================================================
+
+
+@router.get(
+    "/hotels/search",
+    response_model=HotelSearchResponse,
+    summary="Search for hotels within a budget",
+    description=(
+        "Searches Tipsters' Booking.com API for hotels at a destination for a "
+        "given date range, then filters results by the user's total budget for "
+        "the stay. Destination can be a city name (e.g. 'London', 'Prague')."
+    ),
+    responses={
+        200: {"description": "Search completed (results may be empty — see message field)."},
+        422: {"description": "Validation error (budget out of range, bad dates, etc.)."},
+        502: {"description": "Travel data provider is unreachable or returned an error."},
+        504: {"description": "Travel data provider timed out."},
+    },
+)
+async def search_hotels(
+    destination: str = Query(..., min_length=2, max_length=80,
+                             description="City name (e.g. 'London')"),
+    checkin_date: date = Query(..., description="Check-in date (YYYY-MM-DD)"),
+    checkout_date: date = Query(..., description="Check-out date (YYYY-MM-DD)"),
+    budget: float = Query(..., gt=0, le=MAX_BUDGET,
+                          description=f"Total stay budget in USD (${MIN_BUDGET}-${MAX_BUDGET})"),
+    adults: int = Query(1, ge=1, le=10, description="Number of adult guests"),
+    rooms: int = Query(1, ge=1, le=5, description="Number of rooms"),
+    order_by: str = Query("popularity",
+                          pattern="^(popularity|price|review_score|class_descending|class_ascending|distance)$",
+                          description="Sort order"),
+):
+    """Search hotels and filter by budget."""
+
+    # === Step 1: Validate date range ===
+    if checkout_date <= checkin_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="checkout_date must be after checkin_date.",
+        )
+
+    # === Step 2: Resolve destination → Tipsters dest_id + dest_type ===
+    location = await resolve_hotel_location(destination)
+    if location is None or not location.get("dest_id"):
+        return HotelSearchResponse(
+            total_results=0,
+            location_label=destination,
+            requested_currency="USD",
+            budget_filter_applied=False,
+            items=[],
+            message=f"Could not find any destination matching '{destination}'.",
+        )
+
+    # === Step 3: Call Tipsters ===
+    raw = await search_hotels_raw(
+        dest_id=location["dest_id"],
+        dest_type=location["dest_type"],
+        checkin_date=checkin_date.isoformat(),
+        checkout_date=checkout_date.isoformat(),
+        adults=adults,
+        room_number=rooms,
+        currency="USD",
+        order_by=order_by,
+    )
+
+    raw_results = raw.get("result", []) or []
+    total_results_unfiltered = raw.get("count", len(raw_results))
+
+    # === Step 4: Transform ===
+    all_items: list[HotelResult] = []
+    returned_currencies: set[str] = set()
+    for hotel in raw_results:
+        transformed = _transform_hotel(hotel)
+        if transformed is not None:
+            all_items.append(transformed)
+            returned_currencies.add(transformed.currency)
+
+    # === Step 5: Decide if we can filter by budget ===
+    # Tipsters sometimes ignores filter_by_currency=USD and returns local currency.
+    # We only filter if everything came back in USD.
+    can_filter = (returned_currencies == {"USD"})
+
+    if can_filter:
+        under_budget = [item for item in all_items if item.total_price <= budget]
+    else:
+        # Currency drift detected — return all results, can't safely filter
+        under_budget = all_items
+
+    # === Step 6: Empty-results handling ===
+    if not under_budget:
+        if all_items and can_filter:
+            cheapest = min(item.total_price for item in all_items)
+            message = f"No hotels found within ${budget:,.0f}. Cheapest option is ${cheapest:,.2f}."
+        else:
+            message = f"No hotels found in {location['label']} for those dates."
+        return HotelSearchResponse(
+            total_results=total_results_unfiltered,
+            location_label=location["label"],
+            requested_currency="USD",
+            budget_filter_applied=can_filter,
+            items=[],
+            message=message,
+        )
+
+    response_message = None
+    if not can_filter:
+        currencies_str = ", ".join(sorted(returned_currencies))
+        response_message = (
+            f"Note: hotels are priced in {currencies_str} (provider did not honor USD request). "
+            "Budget filter was not applied — please review prices carefully."
+        )
+
+    return HotelSearchResponse(
+        total_results=total_results_unfiltered,
+        location_label=location["label"],
+        requested_currency="USD",
+        budget_filter_applied=can_filter,
+        items=under_budget,
+        message=response_message,
+    )
+
+
+def _transform_hotel(hotel: dict[str, Any]) -> HotelResult | None:
+    """Convert one Tipsters hotel dict into a HotelResult. Returns None if malformed."""
+    try:
+        hotel_id = hotel.get("hotel_id")
+        if not hotel_id:
+            return None
+
+        # Price extraction — Tipsters uses composite_price_breakdown
+        price_block = hotel.get("composite_price_breakdown") or {}
+        gross_total = price_block.get("gross_amount") or {}
+        gross_per_night = price_block.get("gross_amount_per_night") or {}
+
+        total_price = gross_total.get("value")
+        if total_price is None:
+            # No usable price — skip this result
+            return None
+
+        currency = gross_total.get("currency") or hotel.get("currencycode") or "USD"
+
+        # Distance comes as a string ("5.65")
+        distance_str = hotel.get("distance_to_cc")
+        try:
+            distance_km = float(distance_str) if distance_str else None
+        except (ValueError, TypeError):
+            distance_km = None
+
+        return HotelResult(
+            hotel_id=int(hotel_id),
+            hotel_name=hotel.get("hotel_name", "Unknown"),
+            accommodation_type=hotel.get("accommodation_type_name"),
+            star_class=hotel.get("class"),
+            total_price=float(total_price),
+            price_per_night=float(gross_per_night.get("value")) if gross_per_night.get("value") is not None else None,
+            currency=currency,
+            review_score=hotel.get("review_score"),
+            review_score_word=hotel.get("review_score_word"),
+            review_count=hotel.get("review_nr"),
+            city=hotel.get("city", "Unknown"),
+            address=hotel.get("address"),
+            distance_to_center_km=distance_km,
+            latitude=hotel.get("latitude"),
+            longitude=hotel.get("longitude"),
+            photo_url=hotel.get("max_photo_url") or hotel.get("main_photo_url"),
+            booking_url=hotel.get("url"),
+        )
+    except Exception:
+        # Defensive: malformed hotel doesn't crash the whole response
         return None
