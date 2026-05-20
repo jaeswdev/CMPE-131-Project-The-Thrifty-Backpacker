@@ -251,3 +251,39 @@ def create_attraction_booking(
     db.commit()
     db.refresh(booking)
     return _booking_to_response(db, booking)
+
+
+# ============================================================================
+# GET /bookings/by-agent-user — Task #22
+# ============================================================================
+
+@router.get(
+    "/by-agent-user",
+    response_model=list[BookingResponse],
+    summary="Get all bookings for the current user",
+    description=(
+        "Returns every booking belonging to the authenticated user, scoped to "
+        "their tenant. A user from Tenant A will never see Tenant B bookings "
+        "(US-4 AC 4.2 tenant isolation)."
+    ),
+    responses={
+        200: {"description": "List of bookings (may be empty)."},
+        401: {"description": "Missing or invalid JWT."},
+        400: {"description": "Tenant could not be resolved."},
+    },
+)
+def get_bookings_by_agent_user(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    current_tenant: Tenant = Depends(get_current_tenant),
+) -> list[BookingResponse]:
+    bookings = (
+        db.query(Booking)
+        .filter(
+            Booking.User_ID == current_user.User_ID,
+            Booking.Tenant_ID == current_tenant.Tenant_ID,
+        )
+        .order_by(Booking.Created_At.desc())
+        .all()
+    )
+    return [_booking_to_response(db, b) for b in bookings]
