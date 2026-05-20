@@ -287,3 +287,49 @@ def get_bookings_by_agent_user(
         .all()
     )
     return [_booking_to_response(db, b) for b in bookings]
+
+
+# ============================================================================
+# PATCH /bookings/{id}/cancel — Task #24
+# ============================================================================
+
+@router.patch(
+    "/{booking_id}/cancel",
+    response_model=BookingResponse,
+    summary="Cancel a booking",
+    description=(
+        "Sets the booking status to CANCELLED. Idempotent — cancelling an "
+        "already-cancelled booking returns 200. Tenant-scoped: users can only "
+        "cancel their own bookings within their tenant (returns 404 otherwise)."
+    ),
+    responses={
+        200: {"description": "Booking cancelled (or was already cancelled)."},
+        401: {"description": "Missing or invalid JWT."},
+        404: {"description": "Booking not found or belongs to a different tenant/user."},
+    },
+)
+def cancel_booking(
+    booking_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    current_tenant: Tenant = Depends(get_current_tenant),
+) -> BookingResponse:
+    booking = (
+        db.query(Booking)
+        .filter(
+            Booking.Booking_ID == booking_id,
+            Booking.User_ID == current_user.User_ID,
+            Booking.Tenant_ID == current_tenant.Tenant_ID,
+        )
+        .first()
+    )
+    if booking is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Booking not found.",
+        )
+
+    booking.Status = "CANCELLED"
+    db.commit()
+    db.refresh(booking)
+    return _booking_to_response(db, booking)
