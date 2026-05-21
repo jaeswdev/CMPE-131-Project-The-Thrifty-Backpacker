@@ -38,6 +38,27 @@ function statusClass(status) {
     CANCELLED: 'bg-slate-100 text-slate-500',
   }[status] ?? 'bg-slate-100 text-slate-500'
 }
+
+// The dashboard shows the *travel* date, not Created_At (which is just the
+// insert timestamp). Pull it from the cached item — different field per type.
+function travelDateRange(booking) {
+  const item = booking.item
+  if (!item) return '—'
+  const fmt = (d) => d ? new Date(d).toLocaleDateString() : null
+  let start, end
+  if (booking.Booking_Type === 'FLIGHT') {
+    start = fmt(item.Departure_Datetime)
+    end   = fmt(item.Arrival_Datetime)
+  } else if (booking.Booking_Type === 'HOTEL') {
+    start = fmt(item.Checkin_Date)
+    end   = fmt(item.Checkout_Date)
+  } else if (booking.Booking_Type === 'ATTRACTION') {
+    start = fmt(item.Start_Date)
+    end   = fmt(item.End_Date)
+  }
+  if (!start) return '—'
+  return start === end || !end ? start : `${start} → ${end}`
+}
 </script>
 
 <template>
@@ -70,7 +91,7 @@ function statusClass(status) {
           <tr>
             <th class="px-4 py-3 font-semibold text-slate-600">Type</th>
             <th class="px-4 py-3 font-semibold text-slate-600">Price</th>
-            <th class="px-4 py-3 font-semibold text-slate-600">Date</th>
+            <th class="px-4 py-3 font-semibold text-slate-600">Travel date</th>
             <th class="px-4 py-3 font-semibold text-slate-600">Status</th>
             <th class="px-4 py-3"></th>
           </tr>
@@ -88,8 +109,8 @@ function statusClass(status) {
               ${{ Number(booking.Total_Price).toFixed(2) }}
               <span class="text-slate-400 text-xs ml-1">{{ booking.Currency }}</span>
             </td>
-            <td class="px-4 py-3 text-slate-500">
-              {{ booking.Created_At ? new Date(booking.Created_At).toLocaleDateString() : '—' }}
+            <td class="px-4 py-3 text-slate-500 whitespace-nowrap">
+              {{ travelDateRange(booking) }}
             </td>
             <td class="px-4 py-3">
               <span :class="statusClass(booking.Status)" class="px-2 py-0.5 rounded text-xs font-semibold">
