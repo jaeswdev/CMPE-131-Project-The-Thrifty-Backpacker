@@ -102,7 +102,7 @@ function reset() { trip.clearCart() }
       <TripTotalWidget />
     </aside>
 import { ref, computed, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import api from '../services/api'
 import { useTripStore } from '../stores/trip'
 import FlightCard from '../components/FlightCard.vue'
@@ -111,15 +111,17 @@ import AttractionCard from '../components/AttractionCard.vue'
 import ActivityFilter from '../components/ActivityFilter.vue'
 
 const route = useRoute()
+const router = useRouter()
 const tripStore = useTripStore()
+const bookingInProgress = ref(false)
 
 // Read search params from the query string SearchView sends
 const destination = computed(() => route.query.destination || '')
 const origin      = computed(() => route.query.origin || '')
 const budget      = computed(() => parseFloat(route.query.budget) || 1500)
-const startDate   = computed(() => route.query.start_date || '')
-const endDate     = computed(() => route.query.end_date || '')
-const travelers   = computed(() => parseInt(route.query.travelers) || 1)
+const startDate   = computed(() => route.query.depart_date || route.query.start_date || '')
+const endDate     = computed(() => route.query.return_date || route.query.end_date || '')
+const travelers   = computed(() => parseInt(route.query.adults || route.query.travelers) || 1)
 
 const flights          = ref([])
 const hotels           = ref([])
@@ -228,6 +230,33 @@ async function fetchAttractions(tier) {
 function onFilterChange(tiers) {
   fetchAttractions(tiers[0] || null)
 }
+
+async function bookTrip() {
+  bookingInProgress.value = true
+  try {
+    // Hotel booking only for now — flight/activity payload shapes still being aligned
+    if (tripStore.hotel) {
+      await api.post('/bookings/hotels', {
+        booking_type: 'HOTEL',
+        hotel: tripStore.hotel,
+      })
+    }
+    tripStore.clearCart()
+    router.push({ name: 'dashboard' })
+  } catch (err) {
+    const detail = err.response?.data?.detail
+    let msg = err.message
+    if (Array.isArray(detail)) {
+      msg = detail.map(e => `${e.loc?.join('.')}: ${e.msg}`).join('\n')
+    } else if (typeof detail === 'string') {
+      msg = detail
+    }
+    alert('Booking failed:\n' + msg)
+    console.error('Full error:', err.response?.data)
+  } finally {
+    bookingInProgress.value = false
+  }
+}
 </script>
 
 <template>
@@ -264,6 +293,14 @@ function onFilterChange(tiers) {
       <p class="text-sm font-semibold whitespace-nowrap">
         {{ tripStore.percentUsed.toFixed(0) }}% of ${{ tripStore.budget }} budget
       </p>
+      <button
+        @click="bookTrip"
+        :disabled="bookingInProgress || tripStore.percentUsed > 100"
+        :title="tripStore.percentUsed > 100 ? `Over budget by $${(tripStore.totalCost - tripStore.budget).toFixed(2)}` : ''"
+        class="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-medium rounded-md whitespace-nowrap"
+      >
+        {{ bookingInProgress ? 'Booking…' : 'Book Now' }}
+      </button>
     </div>
 
     <!-- Page heading -->
@@ -287,11 +324,13 @@ function onFilterChange(tiers) {
     <section class="mb-10">
       <h2 class="text-xl font-semibold text-slate-700 mb-4">🏨 Hotels</h2>
       <p v-if="loadingHotels" class="text-slate-400 text-sm">Loading hotels…</p>
-      <p v-else-if="hotelMessage" class="text-slate-500 italic text-sm">{{ hotelMessage }}</p>
-      <div v-else-if="hotels.length" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <HotelCard v-for="h in hotels" :key="h.hotel_id" :hotel="h" />
-      </div>
-      <p v-else class="text-slate-400 text-sm">No hotels found.</p>
+      <template v-else>
+        <p v-if="hotelMessage" class="text-slate-500 italic text-sm mb-4">{{ hotelMessage }}</p>
+        <div v-if="hotels.length" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <HotelCard v-for="h in hotels" :key="h.hotel_id" :hotel="h" />
+        </div>
+        <p v-else-if="!hotelMessage" class="text-slate-400 text-sm">No hotels found.</p>
+      </template>
     </section>
 
     <!-- Activities -->
