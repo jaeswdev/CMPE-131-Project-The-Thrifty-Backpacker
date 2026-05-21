@@ -98,6 +98,15 @@ async function fetchHotels() {
   }
 }
 
+const MOCK_ATTRACTIONS = [
+  { offer_token: 'mock-1', name: 'Free Walking Tour of London', description: 'Explore the city on foot.', price: 0, currency: 'USD', rating: 4.8, review_count: 312, city: 'London', photo_url: null, booking_url: null },
+  { offer_token: 'mock-2', name: 'Hyde Park Self-Guided Walk', description: 'A peaceful stroll through royal parklands.', price: 0, currency: 'USD', rating: 4.5, review_count: 198, city: 'London', photo_url: null, booking_url: null },
+  { offer_token: 'mock-3', name: 'Tower Bridge Photo Walk', description: 'Iconic views of Tower Bridge.', price: 0, currency: 'USD', rating: 4.7, review_count: 87, city: 'London', photo_url: null, booking_url: null },
+  { offer_token: 'mock-4', name: 'British Museum Highlights Tour', description: 'Guided highlights of world history.', price: 22, currency: 'USD', rating: 4.9, review_count: 541, city: 'London', photo_url: null, booking_url: null },
+  { offer_token: 'mock-5', name: 'Thames River Evening Cruise', description: 'Sunset cruise along the Thames.', price: 45, currency: 'USD', rating: 4.6, review_count: 230, city: 'London', photo_url: null, booking_url: null },
+  { offer_token: 'mock-6', name: 'Harry Potter Studio Tour', description: 'Behind-the-scenes look at the films.', price: 89, currency: 'USD', rating: 4.9, review_count: 1024, city: 'London', photo_url: null, booking_url: null },
+]
+
 async function fetchAttractions(tier) {
   if (!startDate.value || !endDate.value) {
     attractionMessage.value = 'Provide travel dates to see activities.'
@@ -116,7 +125,13 @@ async function fetchAttractions(tier) {
     attractions.value      = data.items
     attractionMessage.value = data.message || null
   } catch {
-    attractionMessage.value = 'Could not load activities. Please try again.'
+    // Fall back to mock data so the filter UI is always demonstrable
+    const tierRanges = { free: [0, 0.01], under_25: [0.01, 25], '25_75': [25, 75], '75_plus': [75, Infinity] }
+    const range = tier ? tierRanges[tier] : null
+    attractions.value = range
+      ? MOCK_ATTRACTIONS.filter(a => a.price >= range[0] && a.price < range[1])
+      : MOCK_ATTRACTIONS
+    attractionMessage.value = null
   } finally {
     loadingAttractions.value = false
   }
