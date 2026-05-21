@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.endpoints import bookings, search, tenants, trip, users
 from app.core.config import settings
@@ -20,6 +21,13 @@ app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION, lifespan=li
 
 # Middleware (registered in reverse order of execution - last added runs first)
 from app.middleware.tenant import TenantMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.add_middleware(TenantMiddleware)
 
 # Routers
