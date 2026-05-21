@@ -234,11 +234,28 @@ function onFilterChange(tiers) {
 async function bookTrip() {
   bookingInProgress.value = true
   try {
-    // Hotel booking only for now — flight/activity payload shapes still being aligned
+    // Hotel booking only for now — flight/activity payload shapes still being aligned.
+    // Search response uses `hotel_id` and omits dates; booking schema needs
+    // `external_hotel_id` + `checkin_date` + `checkout_date`.
     if (tripStore.hotel) {
+      const h = tripStore.hotel
       await api.post('/bookings/hotels', {
         booking_type: 'HOTEL',
-        hotel: tripStore.hotel,
+        hotel: {
+          external_hotel_id: h.hotel_id,
+          hotel_name: h.hotel_name,
+          accommodation_type: h.accommodation_type,
+          star_class: h.star_class,
+          city: h.city,
+          address: h.address,
+          checkin_date: startDate.value,
+          checkout_date: endDate.value,
+          total_price: h.total_price,
+          price_per_night: h.price_per_night,
+          currency: h.currency,
+          photo_url: h.photo_url,
+          booking_url: h.booking_url,
+        },
       })
     }
     tripStore.clearCart()
