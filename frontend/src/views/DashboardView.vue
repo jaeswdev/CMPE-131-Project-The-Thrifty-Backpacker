@@ -21,11 +21,11 @@ onMounted(async () => {
 })
 
 async function cancelBooking(booking) {
-  if (!confirm(`Cancel this ${(booking.Booking_Type || 'booking').toLowerCase()}?`)) return
+  const label = (booking.Booking_Type || 'booking').toLowerCase()
+  if (!confirm(`Cancel this ${label}? This will permanently remove it from your bookings.`)) return
   try {
-    const { data } = await api.patch(`/bookings/${booking.Booking_ID}/cancel`)
-    const idx = bookings.value.findIndex(b => b.Booking_ID === booking.Booking_ID)
-    if (idx >= 0) bookings.value[idx] = data
+    await api.delete(`/bookings/${booking.Booking_ID}`)
+    bookings.value = bookings.value.filter(b => b.Booking_ID !== booking.Booking_ID)
   } catch {
     alert('Could not cancel this booking. Please try again.')
   }
@@ -133,7 +133,6 @@ function travelDateRange(booking) {
             </td>
             <td class="px-4 py-3 text-right">
               <button
-                v-if="booking.Status !== 'CANCELLED'"
                 @click="cancelBooking(booking)"
                 class="text-xs text-red-500 hover:text-red-700 hover:underline transition"
               >

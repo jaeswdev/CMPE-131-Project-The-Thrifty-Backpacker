@@ -10,7 +10,7 @@ Future tasks will add:
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_tenant, get_current_user
@@ -430,3 +430,43 @@ def cancel_booking(
     db.commit()
     db.refresh(booking)
     return _booking_to_response(db, booking)
+
+
+@router.delete(
+    "/{booking_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a booking",
+    description=(
+        "Permanently removes the Booking row (the cached item row stays, since "
+        "it may be referenced by other bookings). Tenant-scoped: users can "
+        "only delete their own bookings within their tenant."
+    ),
+    responses={
+        204: {"description": "Booking deleted."},
+        401: {"description": "Missing or invalid JWT."},
+        404: {"description": "Booking not found or belongs to a different tenant/user."},
+    },
+)
+def delete_booking(
+    booking_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    current_tenant: Tenant = Depends(get_current_tenant),
+):
+    booking = (
+        db.query(Booking)
+        .filter(
+            Booking.Booking_ID == booking_id,
+            Booking.User_ID == current_user.User_ID,
+            Booking.Tenant_ID == current_tenant.Tenant_ID,
+        )
+        .first()
+    )
+    if booking is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Booking not found.",
+        )
+    db.delete(booking)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
