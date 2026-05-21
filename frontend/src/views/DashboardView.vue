@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import api from '../services/api'
 
 const bookings = ref([])
@@ -7,6 +7,8 @@ const loading  = ref(true)
 const error    = ref(null)
 const selectedIds = ref(new Set())
 const deleting = ref(false)
+const openMenuId = ref(null)
+const updatingId = ref(null)
 
 onMounted(async () => {
   try {
@@ -48,6 +50,37 @@ function toggleAll() {
   }
 }
 
+// === Status menu (PENDING → Confirm | Cancel) ===
+
+function toggleStatusMenu(id) {
+  openMenuId.value = openMenuId.value === id ? null : id
+}
+
+// Close the popover when the user clicks anywhere that isn't inside a menu
+// trigger or panel. Listener attaches once on mount and detaches on unmount.
+function handleDocumentClick(e) {
+  if (!e.target.closest('[data-status-menu]')) {
+    openMenuId.value = null
+  }
+}
+
+onMounted(() => document.addEventListener('click', handleDocumentClick))
+onBeforeUnmount(() => document.removeEventListener('click', handleDocumentClick))
+
+async function confirmBooking(booking) {
+  updatingId.value = booking.Booking_ID
+  try {
+    const { data } = await api.put(`/bookings/${booking.Booking_ID}`, { status: 'CONFIRMED' })
+    const idx = bookings.value.findIndex(b => b.Booking_ID === booking.Booking_ID)
+    if (idx >= 0) bookings.value[idx] = data
+    openMenuId.value = null
+  } catch {
+    alert('Could not confirm this booking. Please try again.')
+  } finally {
+    updatingId.value = null
+  }
+}
+
 // === Delete ===
 
 async function cancelBooking(booking) {
@@ -59,6 +92,7 @@ async function cancelBooking(booking) {
     const next = new Set(selectedIds.value)
     next.delete(booking.Booking_ID)
     selectedIds.value = next
+    openMenuId.value = null
   } catch {
     alert('Could not cancel this booking. Please try again.')
   }
@@ -214,10 +248,44 @@ function travelDateRange(booking) {
             <td class="px-4 py-3 text-slate-500 whitespace-nowrap">
               {{ travelDateRange(booking) }}
             </td>
-            <td class="px-4 py-3">
-              <span :class="statusClass(booking.Status)" class="px-2 py-0.5 rounded text-xs font-semibold">
+            <td class="px-4 py-3 relative" data-status-menu>
+              <button
+                v-if="booking.Status === 'PENDING'"
+                @click.stop="toggleStatusMenu(booking.Booking_ID)"
+                :class="statusClass(booking.Status)"
+                class="px-2 py-0.5 rounded text-xs font-semibold cursor-pointer hover:ring-2 hover:ring-yellow-400 transition"
+                :aria-expanded="openMenuId === booking.Booking_ID"
+              >
+                {{ booking.Status }} ▾
+              </button>
+              <span
+                v-else
+                :class="statusClass(booking.Status)"
+                class="px-2 py-0.5 rounded text-xs font-semibold"
+              >
                 {{ booking.Status }}
               </span>
+
+              <!-- Popover: appears under the PENDING badge -->
+              <div
+                v-if="openMenuId === booking.Booking_ID"
+                data-status-menu
+                class="absolute z-20 mt-1 left-4 w-32 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden"
+              >
+                <button
+                  @click.stop="confirmBooking(booking)"
+                  :disabled="updatingId === booking.Booking_ID"
+                  class="w-full text-left px-3 py-2 text-sm text-green-700 hover:bg-green-50 disabled:opacity-50 transition"
+                >
+                  {{ updatingId === booking.Booking_ID ? 'Confirming…' : '✓ Confirm' }}
+                </button>
+                <button
+                  @click.stop="cancelBooking(booking)"
+                  class="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 border-t border-slate-100 transition"
+                >
+                  ✕ Cancel
+                </button>
+              </div>
             </td>
             <td class="px-4 py-3 text-right">
               <button
