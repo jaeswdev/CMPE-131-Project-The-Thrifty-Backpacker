@@ -26,11 +26,26 @@ function formatDuration(mins) {
 }
 
 function formatTime(isoStr) {
-  return new Date(isoStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  // Tipsters' datetime carries the airport's local time + offset.
+  // Strip the offset (and the date) so we render the wall-clock time
+  // the traveler will actually see at the airport, not the viewer's TZ.
+  if (!isoStr) return ''
+  const m = String(isoStr).match(/T(\d{2}):(\d{2})/)
+  if (!m) return ''
+  const hour = Number(m[1])
+  const min  = m[2]
+  const period = hour >= 12 ? 'PM' : 'AM'
+  const h12 = ((hour + 11) % 12) + 1
+  return `${h12}:${min} ${period}`
 }
 
 function formatDate(isoStr) {
-  return new Date(isoStr).toLocaleDateString([], { month: 'short', day: 'numeric' })
+  // Render the airport-local calendar date, not the viewer's. Tipsters
+  // already encodes airport-local in the YYYY-MM-DD prefix.
+  if (!isoStr) return ''
+  const [y, m, d] = String(isoStr).slice(0, 10).split('-').map(Number)
+  if (!y) return ''
+  return new Date(y, m - 1, d).toLocaleDateString([], { month: 'short', day: 'numeric' })
 }
 </script>
 

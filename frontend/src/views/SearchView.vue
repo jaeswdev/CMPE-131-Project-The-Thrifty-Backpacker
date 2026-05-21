@@ -7,14 +7,22 @@ const router = useRouter()
 const trip = useTripStore()
 
 // === Helpers ===
+// Avoid toISOString() — it converts to UTC and shifts the calendar date
+// for any timezone west of UTC. Users always think in their local calendar,
+// so we format from local Date components instead.
+function pad(n) { return String(n).padStart(2, '0') }
+
+function localIsoDate(d) {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
 function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10)
+  return localIsoDate(new Date())
 }
 
 function isoDatePlusDays(baseIso, days) {
-  const d = new Date(baseIso + 'T00:00:00')
-  d.setDate(d.getDate() + days)
-  return d.toISOString().slice(0, 10)
+  const [y, m, d] = baseIso.split('-').map(Number)
+  return localIsoDate(new Date(y, m - 1, d + days))
 }
 
 // === Form state ===

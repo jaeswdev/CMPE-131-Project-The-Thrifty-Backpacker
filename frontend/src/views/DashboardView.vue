@@ -41,20 +41,32 @@ function statusClass(status) {
 
 // The dashboard shows the *travel* date, not Created_At (which is just the
 // insert timestamp). Pull it from the cached item — different field per type.
+//
+// Format from the YYYY-MM-DD prefix directly; don't pass strings to
+// `new Date()` and call `.toLocaleDateString()`, because:
+//   - "2026-06-04"            is parsed as UTC midnight → shifts back a day west of UTC
+//   - "2026-06-05T18:20:00-07:00" → renders in the viewer's TZ, not the airport's
+// Both produce dates that disagree with what's actually stored.
+function fmtCalendarDate(s) {
+  if (!s) return null
+  const [y, m, d] = String(s).slice(0, 10).split('-').map(Number)
+  if (!y) return null
+  return new Date(y, m - 1, d).toLocaleDateString()
+}
+
 function travelDateRange(booking) {
   const item = booking.item
   if (!item) return '—'
-  const fmt = (d) => d ? new Date(d).toLocaleDateString() : null
   let start, end
   if (booking.Booking_Type === 'FLIGHT') {
-    start = fmt(item.Departure_Datetime)
-    end   = fmt(item.Arrival_Datetime)
+    start = fmtCalendarDate(item.Departure_Datetime)
+    end   = fmtCalendarDate(item.Arrival_Datetime)
   } else if (booking.Booking_Type === 'HOTEL') {
-    start = fmt(item.Checkin_Date)
-    end   = fmt(item.Checkout_Date)
+    start = fmtCalendarDate(item.Checkin_Date)
+    end   = fmtCalendarDate(item.Checkout_Date)
   } else if (booking.Booking_Type === 'ATTRACTION') {
-    start = fmt(item.Start_Date)
-    end   = fmt(item.End_Date)
+    start = fmtCalendarDate(item.Start_Date)
+    end   = fmtCalendarDate(item.End_Date)
   }
   if (!start) return '—'
   return start === end || !end ? start : `${start} → ${end}`
