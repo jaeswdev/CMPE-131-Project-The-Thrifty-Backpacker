@@ -219,7 +219,6 @@ function travelDateRange(booking) {
             <th class="px-4 py-3 font-semibold text-slate-600">Price</th>
             <th class="px-4 py-3 font-semibold text-slate-600">Travel date</th>
             <th class="px-4 py-3 font-semibold text-slate-600">Status</th>
-            <th class="px-4 py-3"></th>
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-100">
@@ -286,14 +285,6 @@ function travelDateRange(booking) {
                   ✕ Cancel
                 </button>
               </div>
-            </td>
-            <td class="px-4 py-3 text-right">
-              <button
-                @click="cancelBooking(booking)"
-                class="text-xs text-red-500 hover:text-red-700 hover:underline transition"
-              >
-                Cancel
-              </button>
             </td>
           </tr>
         </tbody>
