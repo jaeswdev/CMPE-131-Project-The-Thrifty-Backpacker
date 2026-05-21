@@ -11,8 +11,7 @@ const route = useRoute()
 const auth = useAuthStore()
 const tenant = useTenantStore()
 
-// Test state
-const status = ref('idle')  // 'idle' | 'loading' | 'success' | 'error'
+const status = ref('idle')
 const errorMessage = ref('')
 const sessionExpiredMessage = ref('')
 
@@ -20,92 +19,74 @@ if (route.query.reason === 'session_expired') {
   sessionExpiredMessage.value = 'Your session expired. Please log in again.'
 }
 
-async function testLogin() {
+// === Smoke-test helper: logs in as the seed user for the given tenant ===
+async function loginAsSeed(subdomain, email = 'john.doe@example.com', password = 'CMPE-131@2026') {
   status.value = 'loading'
   errorMessage.value = ''
-
-  // T4 smoke test: hardcoded seed credentials + Tenant A subdomain.
-  // T6 will replace this with a real form.
-  setTenantSubdomain('agenta')
+  setTenantSubdomain(subdomain)
 
   try {
-    const res = await api.get('/users/login', {
-      params: {
-        email: 'john.doe@example.com',
-        password: 'CMPE-131@2026',
-      },
-    })
-
-    // Save the session in the auth store
+    const res = await api.get('/users/login', { params: { email, password } })
     auth.setSession(res.data.access_token, {
       user_id: res.data.User_ID,
-      email: 'john.doe@example.com',
+      email,
     })
 
-    // Fetch tenant info now that we have a JWT + subdomain
     const tenantRes = await api.get('/tenants/me')
     tenant.setTenant(tenantRes.data)
 
     status.value = 'success'
-
-    // Navigate to /search
-    setTimeout(() => router.push({ name: 'search' }), 800)
+    setTimeout(() => router.push({ name: 'search' }), 500)
   } catch (err) {
     status.value = 'error'
     errorMessage.value = err.response?.data?.detail || err.message || 'Unknown error'
   }
 }
-
-function testLogout() {
-  auth.clearSession()
-  tenant.clearTenant()
-  setTenantSubdomain(null)
-  status.value = 'idle'
-}
 </script>
 
 <template>
-  <div class="p-8 max-w-xl">
-    <h2 class="text-2xl font-bold text-slate-800">Login (T4 smoke test)</h2>
+  <div class="max-w-md">
+    <h2 class="text-2xl font-bold text-slate-800">Login</h2>
     <p class="mt-2 text-slate-600">
-      This is a temporary test page. T6 will replace it with a real form.
+      Temporary smoke-test login (T6 will replace with a real form).
+      <br/>
+      Try different tenants to see the header re-brand.
     </p>
 
     <div v-if="sessionExpiredMessage" class="mt-4 p-3 bg-amber-100 text-amber-800 rounded">
       {{ sessionExpiredMessage }}
     </div>
 
-    <div class="mt-6 space-y-3">
+    <div class="mt-6 flex flex-col gap-2">
       <button
-        @click="testLogin"
+        @click="loginAsSeed('agenta')"
         :disabled="status === 'loading'"
-        class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+        class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 font-medium"
       >
-        {{ status === 'loading' ? 'Logging in…' : 'Test login as John Doe (agenta)' }}
+        Login as Tenant A (Travel Agency A) — blue
       </button>
-
       <button
-        @click="testLogout"
-        class="ml-2 px-4 py-2 bg-slate-200 text-slate-700 rounded hover:bg-slate-300"
+        @click="loginAsSeed('agentb')"
+        :disabled="status === 'loading'"
+        class="px-4 py-2 bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50 font-medium"
       >
-        Logout
+        Login as Tenant B (Travel Agency B) — green
+      </button>
+      <button
+        @click="loginAsSeed('agentc')"
+        :disabled="status === 'loading'"
+        class="px-4 py-2 bg-slate-600 text-white rounded hover:bg-slate-700 disabled:opacity-50 font-medium"
+      >
+        Login as Tenant C (no theme) — default gray
       </button>
     </div>
 
     <div v-if="status === 'success'" class="mt-4 p-3 bg-green-100 text-green-800 rounded">
-      ✅ Logged in! Redirecting to /search in 800ms…
+      ✅ Logged in! Redirecting to /search…
     </div>
 
     <div v-if="status === 'error'" class="mt-4 p-3 bg-red-100 text-red-800 rounded">
       ❌ Login failed: {{ errorMessage }}
-    </div>
-
-    <div class="mt-6 p-3 bg-slate-100 rounded text-xs">
-      <p class="font-bold text-slate-600">Current state:</p>
-      <p>auth.isLoggedIn: {{ auth.isLoggedIn }}</p>
-      <p>auth.user: {{ JSON.stringify(auth.user) }}</p>
-      <p>tenant.tenantName: {{ tenant.tenantName }}</p>
-      <p>tenant.brandColor: {{ tenant.brandColor }}</p>
     </div>
   </div>
 </template>
