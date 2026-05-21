@@ -1,10 +1,12 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import api from '../services/api'
 
 const bookings = ref([])
 const loading  = ref(true)
 const error    = ref(null)
+const selectedIds = ref(new Set())
+const deleting = ref(false)
 
 onMounted(async () => {
   try {
@@ -20,16 +22,72 @@ onMounted(async () => {
   }
 })
 
+// === Selection ===
+
+const allSelected = computed(() =>
+  bookings.value.length > 0 && selectedIds.value.size === bookings.value.length
+)
+const someSelected = computed(() =>
+  selectedIds.value.size > 0 && !allSelected.value
+)
+
+function toggleOne(id) {
+  // Cloning the Set forces Vue to detect the change (reactivity on Set
+  // mutation isn't tracked otherwise).
+  const next = new Set(selectedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedIds.value = next
+}
+
+function toggleAll() {
+  if (allSelected.value) {
+    selectedIds.value = new Set()
+  } else {
+    selectedIds.value = new Set(bookings.value.map(b => b.Booking_ID))
+  }
+}
+
+// === Delete ===
+
 async function cancelBooking(booking) {
   const label = (booking.Booking_Type || 'booking').toLowerCase()
   if (!confirm(`Cancel this ${label}? This will permanently remove it from your bookings.`)) return
   try {
     await api.delete(`/bookings/${booking.Booking_ID}`)
     bookings.value = bookings.value.filter(b => b.Booking_ID !== booking.Booking_ID)
+    const next = new Set(selectedIds.value)
+    next.delete(booking.Booking_ID)
+    selectedIds.value = next
   } catch {
     alert('Could not cancel this booking. Please try again.')
   }
 }
+
+async function deleteSelected() {
+  const ids = [...selectedIds.value]
+  if (ids.length === 0) return
+  if (!confirm(`Permanently delete ${ids.length} booking${ids.length > 1 ? 's' : ''}? This can't be undone.`)) return
+  deleting.value = true
+  try {
+    const results = await Promise.allSettled(
+      ids.map(id => api.delete(`/bookings/${id}`))
+    )
+    const deletedIds = new Set(
+      ids.filter((_, i) => results[i].status === 'fulfilled')
+    )
+    bookings.value = bookings.value.filter(b => !deletedIds.has(b.Booking_ID))
+    selectedIds.value = new Set()
+    const failedCount = results.filter(r => r.status === 'rejected').length
+    if (failedCount > 0) {
+      alert(`${failedCount} booking${failedCount > 1 ? 's' : ''} could not be deleted. Please try again.`)
+    }
+  } finally {
+    deleting.value = false
+  }
+}
+
+// === Formatting ===
 
 function statusClass(status) {
   return {
@@ -77,7 +135,17 @@ function travelDateRange(booking) {
 
 <template>
   <div class="max-w-4xl mx-auto px-4 py-8">
-    <h1 class="text-2xl font-bold text-slate-800 mb-6">My Bookings</h1>
+    <div class="flex items-center justify-between mb-6">
+      <h1 class="text-2xl font-bold text-slate-800">My Bookings</h1>
+      <button
+        v-if="selectedIds.size > 0"
+        @click="deleteSelected"
+        :disabled="deleting"
+        class="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition"
+      >
+        {{ deleting ? 'Deleting…' : `Delete ${selectedIds.size} selected` }}
+      </button>
+    </div>
 
     <p v-if="loading" class="text-slate-400 text-sm">Loading your bookings…</p>
 
@@ -103,6 +171,16 @@ function travelDateRange(booking) {
       <table class="w-full text-sm">
         <thead class="bg-slate-50 border-b border-slate-200 text-left">
           <tr>
+            <th class="px-4 py-3 w-10">
+              <input
+                type="checkbox"
+                :checked="allSelected"
+                :indeterminate.prop="someSelected"
+                @change="toggleAll"
+                aria-label="Select all bookings"
+                class="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+            </th>
             <th class="px-4 py-3 font-semibold text-slate-600">Type</th>
             <th class="px-4 py-3 font-semibold text-slate-600">Price</th>
             <th class="px-4 py-3 font-semibold text-slate-600">Travel date</th>
@@ -114,8 +192,18 @@ function travelDateRange(booking) {
           <tr
             v-for="booking in bookings"
             :key="booking.Booking_ID"
-            class="hover:bg-slate-50 transition"
+            :class="selectedIds.has(booking.Booking_ID) ? 'bg-blue-50' : 'hover:bg-slate-50'"
+            class="transition"
           >
+            <td class="px-4 py-3">
+              <input
+                type="checkbox"
+                :checked="selectedIds.has(booking.Booking_ID)"
+                @change="toggleOne(booking.Booking_ID)"
+                :aria-label="`Select booking ${booking.Booking_ID}`"
+                class="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+            </td>
             <td class="px-4 py-3 font-medium text-slate-700 capitalize">
               {{ (booking.Booking_Type || 'unknown').toLowerCase() }}
             </td>
