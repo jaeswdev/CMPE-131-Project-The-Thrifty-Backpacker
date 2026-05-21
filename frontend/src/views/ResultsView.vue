@@ -132,12 +132,39 @@ function onFilterChange(tiers) {
 async function bookTrip() {
   bookingInProgress.value = true
   try {
-    // Hotel booking only for now — flight/activity payload shapes still being aligned.
-    // Search response uses `hotel_id` and omits dates; booking schema needs
-    // `external_hotel_id` + `checkin_date` + `checkout_date`.
+    const requests = []
+
+    // Flight: flatten nested departure/arrival, map price_usd → price
+    if (tripStore.flight) {
+      const f = tripStore.flight
+      requests.push(api.post('/bookings/flights', {
+        booking_type: 'FLIGHT',
+        flight: {
+          offer_token: f.offer_token,
+          airline_name: f.airline_name,
+          airline_code: f.airline_code,
+          airline_logo_url: f.airline_logo_url,
+          departure_airport_code: f.departure?.airport_code ?? f.departure_airport_code,
+          departure_airport_name: f.departure?.airport_name ?? f.departure_airport_name,
+          departure_city: f.departure?.city ?? f.departure_city,
+          departure_datetime: f.departure?.datetime ?? f.departure_datetime,
+          arrival_airport_code: f.arrival?.airport_code ?? f.arrival_airport_code,
+          arrival_airport_name: f.arrival?.airport_name ?? f.arrival_airport_name,
+          arrival_city: f.arrival?.city ?? f.arrival_city,
+          arrival_datetime: f.arrival?.datetime ?? f.arrival_datetime,
+          stops: f.stops ?? 0,
+          duration_minutes: f.duration_minutes,
+          price: f.price ?? f.price_usd,
+          currency: f.currency,
+          trip_type: f.trip_type ?? 'ONEWAY',
+        },
+      }))
+    }
+
+    // Hotel: search uses `hotel_id` + omits dates; schema needs external_hotel_id + dates
     if (tripStore.hotel) {
       const h = tripStore.hotel
-      await api.post('/bookings/hotels', {
+      requests.push(api.post('/bookings/hotels', {
         booking_type: 'HOTEL',
         hotel: {
           external_hotel_id: h.hotel_id,
@@ -154,8 +181,38 @@ async function bookTrip() {
           photo_url: h.photo_url,
           booking_url: h.booking_url,
         },
-      })
+      }))
     }
+
+    // Activities: schema requires start_date/end_date and price > 0.
+    // Free activities can't be booked through this endpoint — silently skip them.
+    for (const a of (tripStore.activities ?? [])) {
+      if (!a.price || a.price <= 0) continue
+      requests.push(api.post('/bookings/attractions', {
+        booking_type: 'ATTRACTION',
+        attraction: {
+          offer_token: a.offer_token,
+          name: a.name,
+          description: a.description,
+          city: a.city,
+          price: a.price,
+          currency: a.currency,
+          rating: a.rating,
+          has_free_cancellation: a.has_free_cancellation ?? false,
+          start_date: startDate.value,
+          end_date: endDate.value,
+          photo_url: a.photo_url,
+          booking_url: a.booking_url,
+        },
+      }))
+    }
+
+    if (requests.length === 0) {
+      alert('Pick at least one paid item (flight, hotel, or paid activity) before booking.')
+      return
+    }
+
+    await Promise.all(requests)
     tripStore.clearCart()
     router.push({ name: 'dashboard' })
   } catch (err) {
