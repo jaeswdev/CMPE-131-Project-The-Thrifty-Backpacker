@@ -304,10 +304,11 @@ def get_bookings_by_agent_user(
 # ============================================================================
 
 # PENDING is the entry state. CANCELLED is terminal.
-# CONFIRMED can still be CANCELLED (e.g. refund). CONFIRMED cannot go back to PENDING.
+# CONFIRMED can go back to PENDING (a user undoing confirmation from the
+# dashboard) or move to CANCELLED.
 _ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     "PENDING":   {"CONFIRMED", "CANCELLED"},
-    "CONFIRMED": {"CANCELLED"},
+    "CONFIRMED": {"PENDING", "CANCELLED"},
     "CANCELLED": set(),  # terminal — nothing allowed
 }
 

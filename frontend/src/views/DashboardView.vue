@@ -67,15 +67,21 @@ function handleDocumentClick(e) {
 onMounted(() => document.addEventListener('click', handleDocumentClick))
 onBeforeUnmount(() => document.removeEventListener('click', handleDocumentClick))
 
-async function confirmBooking(booking) {
+async function setBookingStatus(booking, newStatus) {
+  // No-op if already in that state (just close the menu).
+  if (booking.Status === newStatus) {
+    openMenuId.value = null
+    return
+  }
   updatingId.value = booking.Booking_ID
   try {
-    const { data } = await api.put(`/bookings/${booking.Booking_ID}`, { status: 'CONFIRMED' })
+    const { data } = await api.put(`/bookings/${booking.Booking_ID}`, { status: newStatus })
     const idx = bookings.value.findIndex(b => b.Booking_ID === booking.Booking_ID)
     if (idx >= 0) bookings.value[idx] = data
     openMenuId.value = null
-  } catch {
-    alert('Could not confirm this booking. Please try again.')
+  } catch (err) {
+    const detail = err.response?.data?.detail
+    alert(typeof detail === 'string' ? detail : 'Could not update this booking. Please try again.')
   } finally {
     updatingId.value = null
   }
@@ -249,40 +255,41 @@ function travelDateRange(booking) {
             </td>
             <td class="px-4 py-3 relative" data-status-menu>
               <button
-                v-if="booking.Status === 'PENDING'"
                 @click.stop="toggleStatusMenu(booking.Booking_ID)"
                 :class="statusClass(booking.Status)"
-                class="px-2 py-0.5 rounded text-xs font-semibold cursor-pointer hover:ring-2 hover:ring-yellow-400 transition"
+                class="px-2 py-0.5 rounded text-xs font-semibold cursor-pointer hover:ring-2 hover:ring-blue-300 transition"
                 :aria-expanded="openMenuId === booking.Booking_ID"
               >
                 {{ booking.Status }} ▾
               </button>
-              <span
-                v-else
-                :class="statusClass(booking.Status)"
-                class="px-2 py-0.5 rounded text-xs font-semibold"
-              >
-                {{ booking.Status }}
-              </span>
 
-              <!-- Popover: appears under the PENDING badge -->
+              <!-- Popover: change status or delete the booking -->
               <div
                 v-if="openMenuId === booking.Booking_ID"
                 data-status-menu
-                class="absolute z-20 mt-1 left-4 w-32 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden"
+                class="absolute z-20 mt-1 left-4 w-36 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden"
               >
                 <button
-                  @click.stop="confirmBooking(booking)"
+                  @click.stop="setBookingStatus(booking, 'PENDING')"
                   :disabled="updatingId === booking.Booking_ID"
-                  class="w-full text-left px-3 py-2 text-sm text-green-700 hover:bg-green-50 disabled:opacity-50 transition"
+                  class="w-full text-left px-3 py-2 text-sm text-yellow-700 hover:bg-yellow-50 disabled:opacity-50 transition flex items-center justify-between"
                 >
-                  {{ updatingId === booking.Booking_ID ? 'Confirming…' : '✓ Confirm' }}
+                  <span>Pending</span>
+                  <span v-if="booking.Status === 'PENDING'" class="text-yellow-600">✓</span>
+                </button>
+                <button
+                  @click.stop="setBookingStatus(booking, 'CONFIRMED')"
+                  :disabled="updatingId === booking.Booking_ID"
+                  class="w-full text-left px-3 py-2 text-sm text-green-700 hover:bg-green-50 disabled:opacity-50 border-t border-slate-100 transition flex items-center justify-between"
+                >
+                  <span>Confirmed</span>
+                  <span v-if="booking.Status === 'CONFIRMED'" class="text-green-600">✓</span>
                 </button>
                 <button
                   @click.stop="cancelBooking(booking)"
                   class="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 border-t border-slate-100 transition"
                 >
-                  ✕ Cancel
+                  Cancel (delete)
                 </button>
               </div>
             </td>
