@@ -206,8 +206,11 @@ function travelDateRange(booking) {
       </RouterLink>
     </div>
 
-    <!-- Bookings table -->
-    <div v-else class="rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+    <!-- Bookings table.
+         No `overflow-hidden` on the wrapper: the status-menu popover is an
+         absolutely-positioned child of a <td>, and overflow-hidden here would
+         clip it when the menu opens near the bottom of the card. -->
+    <div v-else class="rounded-xl border border-slate-200 shadow-sm">
       <table class="w-full text-sm">
         <thead class="bg-slate-50 border-b border-slate-200 text-left">
           <tr>
@@ -231,7 +234,10 @@ function travelDateRange(booking) {
           <tr
             v-for="booking in bookings"
             :key="booking.Booking_ID"
-            :class="selectedIds.has(booking.Booking_ID) ? 'bg-blue-50' : 'hover:bg-slate-50'"
+            :class="[
+              selectedIds.has(booking.Booking_ID) ? 'bg-blue-50' : 'hover:bg-slate-50',
+              openMenuId === booking.Booking_ID ? 'relative z-30' : '',
+            ]"
             class="transition"
           >
             <td class="px-4 py-3">
