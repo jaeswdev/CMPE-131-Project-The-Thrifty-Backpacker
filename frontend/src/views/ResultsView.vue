@@ -62,6 +62,7 @@ async function fetchFlights() {
         origin:      origin.value,
         destination: destination.value,
         depart_date: startDate.value,
+        return_date: endDate.value || undefined,
         budget:      budget.value,
         adults:      travelers.value,
       },

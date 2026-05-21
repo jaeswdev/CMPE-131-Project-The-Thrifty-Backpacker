@@ -58,6 +58,8 @@ async def search_flights(
                              description="Airport code or city name (e.g. 'LHR' or 'London')"),
     depart_date: date = Query(...,
                               description="Departure date in YYYY-MM-DD format"),
+    return_date: date | None = Query(None,
+                                     description="Return date in YYYY-MM-DD format; when set, search returns round-trip offers"),
     budget: float = Query(..., gt=0, le=MAX_BUDGET,
                           description=f"Total trip budget in USD (${MIN_BUDGET}-${MAX_BUDGET})"),
     adults: int = Query(1, ge=1, le=10, description="Number of adult travelers (1-10)"),
@@ -91,6 +93,8 @@ async def search_flights(
         from_code=from_code,
         to_code=to_code,
         depart_date=depart_date.isoformat(),
+        return_date=return_date.isoformat() if return_date else None,
+        flight_type="ROUNDTRIP" if return_date else "ONEWAY",
         adults=adults,
         cabin_class=cabin_class,
         currency="USD",
@@ -176,6 +180,31 @@ def _transform_offer(offer: dict[str, Any]) -> FlightResult | None:
         dep_airport = first_segment.get("departureAirport") or {}
         arr_airport = first_segment.get("arrivalAirport") or {}
 
+        # Round-trip offers carry a second segment for the return leg.
+        return_departure = None
+        return_arrival = None
+        return_duration_minutes = None
+        return_stops = None
+        if len(segments) > 1:
+            ret_segment = segments[1]
+            ret_legs = ret_segment.get("legs") or []
+            ret_dep_airport = ret_segment.get("departureAirport") or {}
+            ret_arr_airport = ret_segment.get("arrivalAirport") or {}
+            return_departure = FlightAirport(
+                airport_code=ret_dep_airport.get("code", "???"),
+                airport_name=ret_dep_airport.get("name", "Unknown"),
+                city=ret_dep_airport.get("cityName", "Unknown"),
+                datetime=ret_segment.get("departureTimeTz") or ret_segment.get("departureTime"),
+            )
+            return_arrival = FlightAirport(
+                airport_code=ret_arr_airport.get("code", "???"),
+                airport_name=ret_arr_airport.get("name", "Unknown"),
+                city=ret_arr_airport.get("cityName", "Unknown"),
+                datetime=ret_segment.get("arrivalTimeTz") or ret_segment.get("arrivalTime"),
+            )
+            return_duration_minutes = int((ret_segment.get("totalTime", 0) or 0) // 60)
+            return_stops = max(0, len(ret_legs) - 1)
+
         return FlightResult(
             offer_token=offer.get("token", ""),
             price_usd=_money(offer.get("priceBreakdown", {}).get("total")),
@@ -198,6 +227,10 @@ def _transform_offer(offer: dict[str, Any]) -> FlightResult | None:
                 datetime=first_segment.get("arrivalTimeTz") or first_segment.get("arrivalTime"),
             ),
             trip_type=offer.get("tripType", "ONEWAY"),
+            return_departure=return_departure,
+            return_arrival=return_arrival,
+            return_duration_minutes=return_duration_minutes,
+            return_stops=return_stops,
         )
     except Exception:
         # Defensive: if Tipsters returns a malformed offer, skip it rather than crash the whole response

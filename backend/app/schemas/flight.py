@@ -36,6 +36,11 @@ class FlightResult(BaseModel):
     departure: FlightAirport
     arrival: FlightAirport
     trip_type: str = "ONEWAY"           # ONEWAY | ROUNDTRIP
+    # Return leg — set only for ROUNDTRIP offers
+    return_departure: FlightAirport | None = None
+    return_arrival: FlightAirport | None = None
+    return_duration_minutes: int | None = None
+    return_stops: int | None = None
 
 
 class FlightSearchResponse(BaseModel):
