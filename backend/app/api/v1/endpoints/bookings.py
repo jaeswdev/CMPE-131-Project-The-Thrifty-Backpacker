@@ -56,6 +56,16 @@ def _cache_flight(db: Session, payload: FlightItemPayload) -> FlightCache:
         Price=payload.price,
         Currency=payload.currency,
         Trip_Type=payload.trip_type,
+        Return_Departure_Airport_Code=payload.return_departure_airport_code,
+        Return_Departure_Airport_Name=payload.return_departure_airport_name,
+        Return_Departure_City=payload.return_departure_city,
+        Return_Departure_Datetime=payload.return_departure_datetime,
+        Return_Arrival_Airport_Code=payload.return_arrival_airport_code,
+        Return_Arrival_Airport_Name=payload.return_arrival_airport_name,
+        Return_Arrival_City=payload.return_arrival_city,
+        Return_Arrival_Datetime=payload.return_arrival_datetime,
+        Return_Duration_Minutes=payload.return_duration_minutes,
+        Return_Stops=payload.return_stops,
     )
     db.add(cache_row)
     db.flush()  # Get the PK without committing yet

@@ -60,7 +60,9 @@ function travelDateRange(booking) {
   let start, end
   if (booking.Booking_Type === 'FLIGHT') {
     start = fmtCalendarDate(item.Departure_Datetime)
-    end   = fmtCalendarDate(item.Arrival_Datetime)
+    // Round-trip: span is outbound depart → return arrival.
+    // One-way: span is outbound depart → outbound arrival.
+    end = fmtCalendarDate(item.Return_Arrival_Datetime || item.Arrival_Datetime)
   } else if (booking.Booking_Type === 'HOTEL') {
     start = fmtCalendarDate(item.Checkin_Date)
     end   = fmtCalendarDate(item.Checkout_Date)

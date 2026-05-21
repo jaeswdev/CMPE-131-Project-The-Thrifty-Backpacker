@@ -135,7 +135,10 @@ async function bookTrip() {
   try {
     const requests = []
 
-    // Flight: flatten nested departure/arrival, map price_usd → price
+    // Flight: flatten nested departure/arrival, map price_usd → price.
+    // Round-trip offers carry a return leg under f.return_departure /
+    // f.return_arrival — persist those too so the dashboard can show the
+    // full trip span, not just the outbound leg.
     if (tripStore.flight) {
       const f = tripStore.flight
       requests.push(api.post('/bookings/flights', {
@@ -158,6 +161,16 @@ async function bookTrip() {
           price: f.price ?? f.price_usd,
           currency: f.currency,
           trip_type: f.trip_type ?? 'ONEWAY',
+          return_departure_airport_code: f.return_departure?.airport_code ?? null,
+          return_departure_airport_name: f.return_departure?.airport_name ?? null,
+          return_departure_city: f.return_departure?.city ?? null,
+          return_departure_datetime: f.return_departure?.datetime ?? null,
+          return_arrival_airport_code: f.return_arrival?.airport_code ?? null,
+          return_arrival_airport_name: f.return_arrival?.airport_name ?? null,
+          return_arrival_city: f.return_arrival?.city ?? null,
+          return_arrival_datetime: f.return_arrival?.datetime ?? null,
+          return_duration_minutes: f.return_duration_minutes ?? null,
+          return_stops: f.return_stops ?? null,
         },
       }))
     }

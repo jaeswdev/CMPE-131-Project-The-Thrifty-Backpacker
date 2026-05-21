@@ -66,6 +66,18 @@ class FlightCache(Base):
     Duration_Minutes = Column(Integer, nullable=False)
     Trip_Type = Column(String(20), nullable=False, default="ONEWAY")
 
+    # Return leg (round-trip offers only). All nullable for ONEWAY.
+    Return_Departure_Airport_Code = Column(String(10), nullable=True)
+    Return_Departure_Airport_Name = Column(String(200), nullable=True)
+    Return_Departure_City = Column(String(100), nullable=True)
+    Return_Departure_Datetime = Column(DateTime(timezone=True), nullable=True)
+    Return_Arrival_Airport_Code = Column(String(10), nullable=True)
+    Return_Arrival_Airport_Name = Column(String(200), nullable=True)
+    Return_Arrival_City = Column(String(100), nullable=True)
+    Return_Arrival_Datetime = Column(DateTime(timezone=True), nullable=True)
+    Return_Duration_Minutes = Column(Integer, nullable=True)
+    Return_Stops = Column(Integer, nullable=True)
+
     # Price snapshot.
     Price = Column(Float, nullable=False)
     Currency = Column(String(3), nullable=False, default="USD")

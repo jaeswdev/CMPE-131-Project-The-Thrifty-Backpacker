@@ -37,6 +37,17 @@ class FlightItemPayload(BaseModel):
     price: float = Field(..., gt=0)
     currency: str = Field("USD", pattern="^[A-Z]{3}$")
     trip_type: str = "ONEWAY"
+    # Return leg — set only for ROUNDTRIP offers
+    return_departure_airport_code: str | None = None
+    return_departure_airport_name: str | None = None
+    return_departure_city: str | None = None
+    return_departure_datetime: datetime | None = None
+    return_arrival_airport_code: str | None = None
+    return_arrival_airport_name: str | None = None
+    return_arrival_city: str | None = None
+    return_arrival_datetime: datetime | None = None
+    return_duration_minutes: int | None = Field(None, gt=0)
+    return_stops: int | None = Field(None, ge=0)
 
 
 class HotelItemPayload(BaseModel):
