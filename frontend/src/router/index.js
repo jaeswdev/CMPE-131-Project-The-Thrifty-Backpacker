@@ -57,11 +57,14 @@ const router = createRouter({
 // Navigation guard: redirect to /login if a protected route is accessed without a JWT.
 // We read the token directly from localStorage here because the Pinia auth store
 // (T3) doesn't exist yet. T3 will refactor this to use the store.
-router.beforeEach((to, from, next) => {
-  const requiresAuth = to.meta.requiresAuth
-  const hasToken = !!localStorage.getItem('access_token')
+// Auth navigation guard.
+// Uses the Pinia auth store (hydrates from localStorage on app init).
+router.beforeEach(async (to, from, next) => {
+  // Dynamic import to avoid the router/store circular dep at module load.
+  const { useAuthStore } = await import('../stores/auth')
+  const auth = useAuthStore()
 
-  if (requiresAuth && !hasToken) {
+  if (to.meta.requiresAuth && !auth.isLoggedIn) {
     next({ name: 'login' })
   } else {
     next()
